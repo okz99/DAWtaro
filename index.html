@@ -49,7 +49,7 @@ $('newclip').onclick=()=>{if(audioTrack(tracks[selected])){msg('音声ファイ�
 $('splitclip').onclick=()=>{const a=picked()[0];if(!a)return;const {t,c}=a,b=snap(pos);if(b<=c.s||b>=c.s+c.d){msg('ブロック内部の分割位置を上部の目盛りで指定してください');return}clipEdit();const right=makeClip(t,b,c.s+c.d-b);if(audioTrack(t)){right.parts=trimParts(c,b-c.s,c.d);c.parts=trimParts(c,0,b-c.s)}c.d=b-c.s;for(const n of [...t.notes])if(n.cid===c.id){if(n.s>=b)n.cid=right.id;else if(n.s+n.d>b){const tail={...n,s:b,d:n.s+n.d-b,cid:right.id};n.d=b-n.s;t.notes.push(tail)}}picks.clear();chosen=null;draw()};
 $('mergeclip').onclick=()=>{const a=picked();if(a.length<2||a.some(x=>x.t!==a[0].t))return;clipEdit();const t=a[0].t,ids=new Set(a.map(x=>x.c.id)),s=Math.min(...a.map(x=>x.c.s)),e=Math.max(...a.map(x=>x.c.s+x.c.d));const c=makeClip(t,s,e-s);if(audioTrack(t))c.parts=a.flatMap(x=>audioParts(x.c).map(p=>({...p,at:p.at+x.c.s-s})));t.clips=t.clips.filter(x=>!ids.has(x.id));t.notes.forEach(n=>{if(ids.has(n.cid))n.cid=c.id});chooseClip(c);draw()};
 $('copyclip').onclick=()=>{const a=picked();if(!a.length)return;const base=Math.min(...a.map(x=>x.c.s)),row=Math.min(...a.map(x=>x.i));clipboard=a.map(({t,i,c})=>({s:c.s-base,d:c.d,row:i-row,kind:t.kind||"midi",parts:audioParts(c).map(p=>({...p})),notes:t.notes.filter(n=>n.cid===c.id).map(n=>({...n,s:n.s-c.s}))}));draw();msg('コピーしました。貼り付け位置とトラックを指定してください')};
-$('pasteclip').onclick=()=>{if(!clipboard.length)return;const base=snap(pos);if(clipboard.some(c=>base+c.s+c.d>total()||selected+c.row>=tracks.length||((tracks[selected+c.row]?.kind||"midi")!==c.kind))){msg('貼り付け先の小節数またはトラック数が不足しています');return}clipEdit();picks.clear();for(const a of clipboard){const t=tracks[selected+a.row],c=makeClip(t,base+a.s,a.d);if(audioTrack(t))c.parts=a.parts.map(p=>({...p}));t.notes.push(...a.notes.map(n=>({...n,s:c.s+n.s,cid:c.id})));picks.add(c.id)}draw()};
+$('pasteclip').onclick=()=>{if(!clipboard.length)return;const base=Math.max(0,snap(pos));if(clipboard.some(c=>selected+c.row>=tracks.length)){msg('貼り付け先のトラック数が不足しています');return}if(clipboard.some(c=>(tracks[selected+c.row]?.kind||"midi")!==c.kind)){msg('貼り付け先のトラックの種類が一致しません');return}clipEdit();const end=Math.max(...clipboard.map(c=>base+c.s+c.d));growTo(end);picks.clear();for(const a of clipboard){const t=tracks[selected+a.row],c=makeClip(t,base+a.s,a.d);if(audioTrack(t))c.parts=a.parts.map(p=>({...p}));t.notes.push(...a.notes.map(n=>({...n,s:c.s+n.s,cid:c.id})));picks.add(c.id)}draw()};
 $('deleteclip').onclick=()=>{const a=picked();if(!a.length)return;clipEdit();for(const {t,c} of a){t.notes=t.notes.filter(n=>n.cid!==c.id);t.clips=t.clips.filter(x=>x!==c)}picks.clear();chosen=null;draw()};
 // 音声本体は履歴とは別に保持し、クリップには参照と編集範囲のみ保存する。
 const assets=new Map();
@@ -260,6 +260,19 @@ const prefKey='DAWtaro-settings-v1',prefInputs=['bpm','masterlevel','sfboost','b
 function savePreferences(){try{localStorage.setItem(prefKey,JSON.stringify({inputs:Object.fromEntries(prefInputs.map(id=>[id,$(id).value])),metro,countEnabled,loop,clipSnap,followCursor,device:preferredDevice}))}catch(e){msg('設定を保存できません：'+e.message)}}
 function restorePreferences(){try{const p=JSON.parse(localStorage.getItem(prefKey)||'null');if(!p)return;for(const id of prefInputs){if(p.inputs?.[id]!=null){$(id).value=p.inputs[id];if(id==='bpm'||id==='bars')$(id).onchange();else if($(id).oninput)$(id).oninput()}}metro=typeof p.metro==='boolean'?p.metro:metro;countEnabled=typeof p.countEnabled==='boolean'?p.countEnabled:countEnabled;loop=typeof p.loop==='boolean'?p.loop:loop;if(typeof p.clipSnap==='boolean'&&p.clipSnap!==clipSnap)$('clipsnap').onclick();if(typeof p.followCursor==='boolean'&&p.followCursor!==followCursor)$('follow').onclick();preferredDevice=typeof p.device==='string'?p.device:'';buttons();draw()}catch(e){msg('設定復元エラー：'+e.message)}}
 restorePreferences();
+// Ctrl＋ホイールはブラウザの拡大縮小ではなく、DAWの横ズームに割り当てる。
+window.addEventListener('wheel',e=>{
+  if(!e.ctrlKey)return;
+  e.preventDefault();
+  if(!e.deltaY)return;
+  const z=$('zoom'), direction=e.deltaY<0?1:-1;
+  const current=+z.value;
+  const next=clamp(current+direction*Math.max(1,Math.round(current*.12)),+z.min,+z.max);
+  if(next===current)return;
+  z.value=String(next);
+  z.dispatchEvent(new Event('input',{bubbles:true}));
+},{capture:true,passive:false});
+
 for(const id of prefInputs){$(id).addEventListener('change',savePreferences);if($(id).type==='range')$(id).addEventListener('input',savePreferences)}
 for(const id of ['metro','countin','loop','clipsnap','follow'])$(id).addEventListener('click',savePreferences);
 $('device').addEventListener('change',()=>{preferredDevice=$('device').value;savePreferences()});
